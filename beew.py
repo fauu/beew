@@ -6,29 +6,26 @@ import simplejson as json
 weeb_login = ''
 weeb_password = ''
 player_executable = 'mpv'
+force_highdef = True                                        # Force high definition playback if available
 # END
 
 ROOT_URL = 'http://weeb.tv'
 API_URL = ROOT_URL + '/api/getChannelList'
 PLAYER_URL = ROOT_URL + '/api/setplayer'
 
-arg_parser = argparse.ArgumentParser()
+arg_parser = argparse.ArgumentParser(description = 'Watch weeb.tv streams in your favourite media player')
 arg_group = arg_parser.add_mutually_exclusive_group()
-arg_group.add_argument('-n', '--channelname', help = 'Search for a channel by name')
-arg_group.add_argument('-c', '--channelid', type = int, help = 'Specify channel ID')
+arg_group.add_argument('-n', '--channelname', help = 'filter channel list by name')
+arg_group.add_argument('-c', '--channelid', type = int, help = 'skip channel selection and start playing')
+arg_parser.add_argument('-l', '--lowquality', action = 'store_true', help = 'force lower quality playback if higher quality is available')
 
 def channel_list_from_json(data):
-    channelList = []
-    temp = []
+    channel_list = dict()
     for key, vals in data.iteritems():
-        temp.append(int(key))
-        temp.append(vals)
-        channelList.append(temp)
-        temp = []
-    return channelList
+        channel_list[vals['cid']] = { 'name': vals['channel_title'], 'multibitrate': vals['multibitrate'] }
+    return channel_list
     
 def request(url):
-    result = { '0': 'Null' }
     headers = { 'User-Agent': 'XBMC', 'ContentType': 'application/x-www-form-urlencoded' }
     params = { 'username': weeb_login, 'userpassword': weeb_password }
     params_encoded = urllib.urlencode(params)
@@ -58,7 +55,7 @@ def get_stream_params(channel_id):
 
 def get_rtmpdump_command(channel_id, bitrate):
     stream_params = get_stream_params(channel_id)
-    if bitrate == 1:
+    if bitrate == 1 and force_highdef:
         stream_params['playpath'] += 'HI'
     command = 'rtmpdump'
     command += ' -v -r ' + stream_params['rtmp'] + '/' + stream_params['playpath']
@@ -68,28 +65,31 @@ def get_rtmpdump_command(channel_id, bitrate):
     return command
 
 args = arg_parser.parse_args()
-channel_list = get_channel_list()
+
+channels = get_channel_list()
+
+if args.lowquality:
+    force_highdef = False
 
 if not args.channelid:
     if args.channelname:
         filter_string = ' (filter text: "' + args.channelname + '")'
     else:
         filter_string = ''
-
+        
     print 'WEEB.tv - Available Channels' + filter_string + ':\n'
-    for channel in channel_list:
-        if (args.channelname and args.channelname.lower() in channel[1]['channel_title'].lower()) or not args.channelname:
-            print '[' + str(channel[1]['cid']) + '] ' + channel[1]['channel_title']
 
-    channel_id = int(raw_input("\nEnter Channel ID: "))
+    for id, params in channels.iteritems():
+        if (args.channelname and args.channelname.lower() in params['name'].lower()) or not args.channelname:
+            print '[' + id + '] ' + params['name']
+
+    channel_id = raw_input("\nEnter Channel ID: ")
 else:
-    channel_id = args.channelid
+    channel_id = str(args.channelid)
 
-for channel in channel_list:
-    if int(channel[1]['cid']) == channel_id:
-        rtmp_command = get_rtmpdump_command(channel[1]['cid'], channel[1]['multibitrate'])
-        shell_command = rtmp_command + ' | ' + player_executable + ' - 2 > /dev/null'
-        os.system(shell_command)
-        sys.exit(0)
-
-print 'ERROR: Something went wrong!'
+if channel_id in channels:
+    rtmp_command = get_rtmpdump_command(channel_id, channels[channel_id]['multibitrate'])
+    shell_command = rtmp_command + ' | ' + player_executable + ' - 2 > /dev/null'
+    os.system(shell_command)
+else:
+    print '\nERROR: Something went wrong! Make sure that:\n1. Selected channel is available in conventional way (through the website)\n2. Username and password you\'ve provided are correct\n3. Your premium subscription is active (if channel is currently in premium-only mode)\n'
